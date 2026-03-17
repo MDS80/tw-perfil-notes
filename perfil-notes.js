@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         TW Notes Scanner + K Multi Filter
+// @name         TW Notes Scanner + Filtros de perfil
 // @namespace    http://tampermonkey.net/
-// @version      1.2.2
-// @description  Notes scanner + filtro por continentes K (multi-seleção)
+// @version      1.3.5
+// @description  Notes scanner + filtro por continentes K + muralha/torre + pontos da aldeia
 // @author       You
 // @match        *://*.tribalwars.com.pt/*
 // @match        *://*.tribalwars.net/*
@@ -43,7 +43,6 @@
         if (window.__pp_notes_initialized) return;
         window.__pp_notes_initialized = true;
 
-        // Translations
         const translations = {
             en: {
                 notes: 'Notes',
@@ -61,11 +60,6 @@
                 filterUnknownTooltip: 'Show only unknown villages',
                 showAll: 'All',
                 showAllTooltip: 'Show all villages',
-                filterKTooltip: 'Show villages by continent (auto list)',
-                kFilterTitle: 'Continents',
-                kApply: 'Apply K',
-                kClear: 'Clear K',
-                filteredKMulti: 'Filtered {0} villages from {1} (coords copied)',
                 copyCoords: 'Copy Visible Coords',
                 warningTitle: 'Warning:',
                 warningMessage: 'Only {0} of {1} villages loaded. Click here to load all villages before scanning.',
@@ -74,7 +68,6 @@
                 gameDataNotAvailable: 'Game data not available',
                 noNotesFound: 'No notes found for this village',
                 failedToLoad: 'Failed to load note',
-                filtered: 'Filtered {0} villages (coords copied)',
                 copied: 'Copied {0} coordinates',
                 villageNotes: 'Village Notes - {0}',
                 scanConfirmMessage: 'This will load notes for all villages. This may take several minutes. Continue?',
@@ -98,11 +91,6 @@
                 filterUnknownTooltip: 'Mostrar apenas aldeias desconhecidas',
                 showAll: 'Todas',
                 showAllTooltip: 'Mostrar todas as aldeias',
-                filterKTooltip: 'Mostrar aldeias por continente (lista automática)',
-                kFilterTitle: 'Continentes',
-                kApply: 'Aplicar K',
-                kClear: 'Limpar K',
-                filteredKMulti: 'Filtradas {0} aldeias de {1} (coords copiadas)',
                 copyCoords: 'Copiar Coords Visíveis',
                 warningTitle: 'Aviso:',
                 warningMessage: 'Apenas {0} de {1} aldeias carregadas. Clique aqui para carregar todas as aldeias antes de analisar.',
@@ -111,7 +99,6 @@
                 gameDataNotAvailable: 'Dados do jogo não disponíveis',
                 noNotesFound: 'Nenhuma nota encontrada para esta aldeia',
                 failedToLoad: 'Falha ao carregar nota',
-                filtered: 'Filtradas {0} aldeias (coords copiadas)',
                 copied: 'Copiadas {0} coordenadas',
                 villageNotes: 'Notas da Aldeia - {0}',
                 scanConfirmMessage: 'Isto irá carregar notas de todas as aldeias. Pode demorar vários minutos. Continuar?',
@@ -131,7 +118,9 @@
 
         window.pp_settings = window.pp_settings || {
             noteStates: {},
-            popupPosition: null
+            popupPosition: null,
+            wallLevels: {},
+            towerLevels: {}
         };
 
         function classifyVillage(content) {
@@ -173,190 +162,361 @@
 
         $('<style>')
             .text(`
-                /* ── ícones de nota ───────────────────────────── */
-                .pp-note-icon { font-size:13px; display:inline-block; cursor:pointer; padding:2px 7px; border-radius:4px; transition:all .2s; color:white; font-weight:bold; }
+                .pp-note-icon {
+                    font-size:13px;
+                    display:inline-block;
+                    cursor:pointer;
+                    padding:2px 7px;
+                    border-radius:4px;
+                    transition:all .2s;
+                    color:white;
+                    font-weight:bold;
+                }
                 .pp-note-icon:hover { transform:scale(1.1); }
                 .pp-note-icon.not-loaded { background:#c8c8c8; color:#555; }
                 .pp-note-icon.loading   { background:#e08b00; color:#fff; animation:pulse 1s infinite; }
                 .pp-note-icon.off       { background:#b71c1c; color:#fff; }
                 .pp-note-icon.def       { background:#0d47a1; color:#fff; }
                 .pp-note-icon.no-data   { background:#37474f; color:#fff; }
+
                 @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.5;} }
 
-                /* ── wrapper geral ────────────────────────────── */
                 .pp-panel {
-                    margin:6px 0; border:2px solid #6b4c24; border-radius:6px;
-                    overflow:hidden; font-family:sans-serif;
-                    box-shadow: 0 2px 6px rgba(0,0,0,.25);
+                    margin:6px 0;
+                    border:2px solid #6b4c24;
+                    border-radius:6px;
+                    overflow:hidden;
+                    font-family:sans-serif;
+                    box-shadow:0 2px 6px rgba(0,0,0,.25);
+                    width:100%;
+                    max-width:none;
+                    box-sizing:border-box;
                 }
 
-                /* ── linha 1: cabeçalho com stats + scan ─────── */
                 .pp-row-header {
-                    display:flex; align-items:center; gap:8px; flex-wrap:nowrap;
-                    padding:7px 12px; background:#3d1f00; min-width:0; overflow:hidden;
+                    display:flex;
+                    align-items:center;
+                    gap:6px;
+                    flex-wrap:nowrap;
+                    padding:7px 10px;
+                    background:#3d1f00;
+                    min-width:0;
+                    overflow-x:auto;
                 }
+
                 .pp-row-header .pp-label {
-                    font-size:12px; font-weight:bold; color:#f5e6c8; letter-spacing:1px; text-transform:uppercase; margin-right:2px;
+                    font-size:12px;
+                    font-weight:bold;
+                    color:#f5e6c8;
+                    letter-spacing:1px;
+                    text-transform:uppercase;
+                    margin-right:2px;
+                    flex:0 0 auto;
                 }
+
                 .pp-stat {
-                    display:inline-flex; align-items:center; gap:4px;
-                    font-size:12px; padding:3px 10px; border-radius:4px; color:white; font-weight:bold; min-width:42px; justify-content:center;
+                    display:inline-flex;
+                    align-items:center;
+                    gap:4px;
+                    font-size:12px;
+                    padding:3px 10px;
+                    border-radius:4px;
+                    color:white;
+                    font-weight:bold;
+                    min-width:42px;
+                    justify-content:center;
+                    flex:0 0 auto;
                 }
+
                 .pp-stat.off     { background:#b71c1c; }
                 .pp-stat.def     { background:#0d47a1; }
                 .pp-stat.nd      { background:#424242; }
                 .pp-stat.pending { background:#555; opacity:.8; }
 
                 .pp-btn-scan {
-                    font-size:11px; padding:4px 12px;
-                    background:#e53935; border:1px solid #b71c1c;
-                    border-radius:4px; color:#fff; font-weight:bold; cursor:pointer;
+                    font-size:10px;
+                    padding:4px 10px;
+                    background:#e53935;
+                    border:1px solid #b71c1c;
+                    border-radius:4px;
+                    color:#fff;
+                    font-weight:bold;
+                    cursor:pointer;
                     box-shadow:inset 0 1px 0 rgba(255,255,255,.2);
-                    transition: background .15s;
+                    transition:background .15s;
+                    white-space:nowrap;
+                    flex:0 0 auto;
                 }
                 .pp-btn-scan:hover { background:#ef5350; }
+
                 .pp-btn-copy {
-                    font-size:11px; padding:4px 14px;
-                    background:#2e7d32; border:1px solid #1b5e20;
-                    border-radius:4px; color:#fff; font-weight:bold; cursor:pointer;
+                    font-size:10px;
+                    padding:4px 10px;
+                    background:#2e7d32;
+                    border:1px solid #1b5e20;
+                    border-radius:4px;
+                    color:#fff;
+                    font-weight:bold;
+                    cursor:pointer;
                     box-shadow:inset 0 1px 0 rgba(255,255,255,.2);
-                    transition: background .15s;
-                    white-space:nowrap; flex-shrink:0;
+                    transition:background .15s;
+                    white-space:nowrap;
+                    flex:0 0 auto;
+                    margin-left:auto;
                 }
                 .pp-btn-copy:hover { background:#388e3c; }
 
-                /* ── linha 2: filtros tipo ───────────────────── */
-                .pp-row-filters {
-                    display:flex; align-items:center; gap:6px; flex-wrap:wrap;
-                    padding:6px 12px; background:#fff8f0; border-top:2px solid #6b4c24;
+                .pp-row-filters,
+                .pp-row-k,
+                .pp-row-buildings {
+                    display:flex;
+                    align-items:center;
+                    gap:5px;
+                    flex-wrap:nowrap;
+                    padding:6px 10px;
+                    border-top:2px solid #6b4c24;
+                    overflow-x:auto;
                 }
-                .pp-filter-label { font-size:10px; font-weight:bold; color:#8B4513; text-transform:uppercase; letter-spacing:.5px; }
-                /* botão OFF */
+
+                .pp-row-filters { background:#fff8f0; }
+                .pp-row-k { background:#e8f0fe; min-height:32px; }
+                .pp-row-buildings { background:#f0f4ff; min-height:32px; }
+
+                .pp-filter-label {
+                    font-size:10px;
+                    font-weight:bold;
+                    color:#8B4513;
+                    text-transform:uppercase;
+                    letter-spacing:.5px;
+                    flex:0 0 auto;
+                    min-width:max-content;
+                }
+
                 #filter-off.pp-btn {
-                    background:#b71c1c; border:1px solid #7f0000; color:#fff;
+                    background:#b71c1c;
+                    border:1px solid #7f0000;
+                    color:#fff;
                     box-shadow:inset 0 1px 0 rgba(255,255,255,.2);
                 }
                 #filter-off.pp-btn:hover { background:#c62828; }
                 #filter-off.pp-btn.active-filter {
-                    box-shadow: 0 0 0 2px #ff8a80, inset 0 2px 5px rgba(0,0,0,.45);
-                    filter: brightness(.85);
+                    box-shadow:0 0 0 2px #ff8a80, inset 0 2px 5px rgba(0,0,0,.45);
+                    filter:brightness(.85);
                 }
-                /* botão DEF */
+
                 #filter-def.pp-btn {
-                    background:#0d47a1; border:1px solid #002171; color:#fff;
+                    background:#0d47a1;
+                    border:1px solid #002171;
+                    color:#fff;
                     box-shadow:inset 0 1px 0 rgba(255,255,255,.2);
                 }
                 #filter-def.pp-btn:hover { background:#1565c0; }
                 #filter-def.pp-btn.active-filter {
-                    box-shadow: 0 0 0 2px #82b1ff, inset 0 2px 5px rgba(0,0,0,.45);
-                    filter: brightness(.85);
+                    box-shadow:0 0 0 2px #82b1ff, inset 0 2px 5px rgba(0,0,0,.45);
+                    filter:brightness(.85);
                 }
-                /* botão Sem info */
+
                 #filter-nd.pp-btn {
-                    background:#424242; border:1px solid #212121; color:#fff;
+                    background:#424242;
+                    border:1px solid #212121;
+                    color:#fff;
                     box-shadow:inset 0 1px 0 rgba(255,255,255,.15);
                 }
                 #filter-nd.pp-btn:hover { background:#616161; }
                 #filter-nd.pp-btn.active-filter {
-                    box-shadow: 0 0 0 2px #bdbdbd, inset 0 2px 5px rgba(0,0,0,.45);
-                    filter: brightness(.85);
+                    box-shadow:0 0 0 2px #bdbdbd, inset 0 2px 5px rgba(0,0,0,.45);
+                    filter:brightness(.85);
                 }
+
+                #filter-attack-mine.pp-btn {
+                    background:#7b1fa2;
+                    border:1px solid #4a0072;
+                    color:#fff;
+                    box-shadow:inset 0 1px 0 rgba(255,255,255,.2);
+                }
+                #filter-attack-mine.pp-btn:hover { background:#9c27b0; }
+                #filter-attack-mine.pp-btn.active-filter {
+                    box-shadow:0 0 0 2px #ce93d8, inset 0 2px 5px rgba(0,0,0,.45);
+                    filter:brightness(.85);
+                }
+
+                #filter-attack-ally.pp-btn {
+                    background:#1565c0;
+                    border:1px solid #003c8f;
+                    color:#fff;
+                    box-shadow:inset 0 1px 0 rgba(255,255,255,.2);
+                }
+                #filter-attack-ally.pp-btn:hover { background:#1976d2; }
+                #filter-attack-ally.pp-btn.active-filter {
+                    box-shadow:0 0 0 2px #90caf9, inset 0 2px 5px rgba(0,0,0,.45);
+                    filter:brightness(.85);
+                }
+
+                #filter-attack-none.pp-btn {
+                    background:#2e7d32;
+                    border:1px solid #1b5e20;
+                    color:#fff;
+                    box-shadow:inset 0 1px 0 rgba(255,255,255,.2);
+                }
+                #filter-attack-none.pp-btn:hover { background:#388e3c; }
+                #filter-attack-none.pp-btn.active-filter {
+                    box-shadow:0 0 0 2px #a5d6a7, inset 0 2px 5px rgba(0,0,0,.45);
+                    filter:brightness(.85);
+                }
+
                 .pp-btn {
-                    font-size:11px; padding:4px 12px; border-radius:4px;
-                    font-weight:bold; cursor:pointer;
-                    transition: box-shadow .15s, filter .15s, background .15s;
+                    font-size:10px;
+                    padding:4px 9px;
+                    border-radius:4px;
+                    font-weight:bold;
+                    cursor:pointer;
+                    transition:box-shadow .15s, filter .15s, background .15s;
                     user-select:none;
+                    flex:0 0 auto;
+                    white-space:nowrap;
                 }
+
                 .pp-btn-reset {
-                    font-size:11px; padding:4px 12px; margin-left:auto;
-                    background:#fff; border:2px solid #c0392b; border-radius:4px;
-                    color:#c0392b; font-weight:bold; cursor:pointer;
-                    transition: background .15s, color .15s;
+                    font-size:10px;
+                    padding:4px 9px;
+                    margin-left:auto;
+                    background:#fff;
+                    border:2px solid #c0392b;
+                    border-radius:4px;
+                    color:#c0392b;
+                    font-weight:bold;
+                    cursor:pointer;
+                    transition:background .15s, color .15s;
+                    flex:0 0 auto;
+                    white-space:nowrap;
                 }
                 .pp-btn-reset:hover { background:#c0392b; color:#fff; }
 
-                /* ── linha 3: continentes K ──────────────────── */
-                .pp-row-k {
-                    display:flex; align-items:center; gap:5px; flex-wrap:wrap;
-                    padding:6px 12px; background:#e8f0fe; border-top:2px solid #6b4c24;
-                    min-height:32px;
-                }
                 .k-tag {
-                    font-size:10px; padding:3px 10px; border-radius:12px; cursor:pointer; font-weight:bold;
-                    background:#fff; border:1px solid #3949ab; color:#3949ab;
-                    transition: background .15s, color .15s, box-shadow .15s;
+                    font-size:10px;
+                    padding:3px 10px;
+                    border-radius:12px;
+                    cursor:pointer;
+                    font-weight:bold;
+                    background:#fff;
+                    border:1px solid #3949ab;
+                    color:#3949ab;
+                    transition:background .15s, color .15s, box-shadow .15s;
                     user-select:none;
+                    flex:0 0 auto;
+                    white-space:nowrap;
                 }
                 .k-tag:hover { background:#e8eaf6; }
                 .k-tag.active-filter {
-                    background:#3949ab; color:#fff; border-color:#1a237e;
-                    box-shadow: 0 0 0 2px #9fa8da;
+                    background:#3949ab;
+                    color:#fff;
+                    border-color:#1a237e;
+                    box-shadow:0 0 0 2px #9fa8da;
                 }
 
-                /* ── linha 4: edifícios ─────────────────────── */
-                .pp-row-buildings {
-                    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
-                    padding:6px 12px; background:#f0f4ff; border-top:2px solid #6b4c24;
-                    min-height:32px;
-                }
                 .pp-building-lvl-label {
-                    display:inline-block; margin-left:3px; font-size:10px;
-                    background:rgba(0,0,0,.18); border-radius:3px; padding:0 4px;
-                    min-width:14px; text-align:center;
+                    display:inline-block;
+                    margin-left:3px;
+                    font-size:10px;
+                    background:rgba(0,0,0,.18);
+                    border-radius:3px;
+                    padding:0 4px;
+                    min-width:14px;
+                    text-align:center;
                 }
                 .pp-building-lvl-label:empty { display:none; }
-                .pp-building-filter { display:inline-flex; align-items:center; gap:4px; }
-                .pp-building-icon { font-size:16px; line-height:1; }
-                .pp-building-label { font-size:11px; font-weight:bold; color:#3949ab; }
+
                 .pp-building-input {
-                    width:42px; padding:2px 4px; font-size:11px; font-weight:bold;
-                    border:1px solid #3949ab; border-radius:4px; text-align:center;
-                    color:#1a237e; background:#fff;
+                    width:62px;
+                    padding:2px 4px;
+                    font-size:11px;
+                    font-weight:bold;
+                    border:1px solid #3949ab;
+                    border-radius:4px;
+                    text-align:center;
+                    color:#1a237e;
+                    background:#fff;
+                    flex:0 0 auto;
                 }
                 .pp-building-input:focus { outline:2px solid #7986cb; }
-                .pp-building-input.input-active { background:#e8eaf6; border-color:#1a237e; box-shadow:0 0 0 2px #9fa8da; }
-                .pp-btn-apply-buildings {
-                    font-size:11px; padding:3px 10px;
-                    background:#3949ab; border:1px solid #1a237e; border-radius:4px;
-                    color:#fff; font-weight:bold; cursor:pointer;
-                    transition: background .15s;
-                }
-                .pp-btn-apply-buildings:hover { background:#5c6bc0; }
+
                 .pp-btn-clear-buildings {
-                    font-size:11px; padding:3px 8px;
-                    background:#fff; border:1px solid #c0392b; border-radius:4px;
-                    color:#c0392b; font-weight:bold; cursor:pointer;
-                    transition: background .15s, color .15s;
+                    font-size:11px;
+                    padding:3px 8px;
+                    background:#fff;
+                    border:1px solid #c0392b;
+                    border-radius:4px;
+                    color:#c0392b;
+                    font-weight:bold;
+                    cursor:pointer;
+                    transition:background .15s, color .15s;
+                    flex:0 0 auto;
+                    white-space:nowrap;
                 }
                 .pp-btn-clear-buildings:hover { background:#c0392b; color:#fff; }
+
                 .pp-building-status {
-                    font-size:10px; font-style:italic; color:#5c6bc0; margin-left:4px;
+                    font-size:10px;
+                    font-style:italic;
+                    color:#5c6bc0;
+                    margin-left:4px;
+                    flex:0 0 auto;
+                    white-space:nowrap;
                 }
 
-                /* ── progress + notificação de scan ─────────── */
                 .pp-progress-wrap {
-                    padding:5px 10px; background:#fdf3e0; border-top:1px solid #c9a97a;
+                    padding:5px 10px;
+                    background:#fdf3e0;
+                    border-top:1px solid #c9a97a;
                     display:none;
                 }
                 .pp-progress-wrap.active { display:block; }
-                .pp-progress-bar-text { font-size:11px; color:#5a3e1b; margin-bottom:4px; text-align:center; }
-                .pp-progress-track { height:6px; background:#d6b47a; border-radius:3px; overflow:hidden; }
-                .pp-progress-fill { height:100%; width:0%; background:#8B4513; border-radius:3px; transition:width .3s; }
+                .pp-progress-bar-text {
+                    font-size:11px;
+                    color:#5a3e1b;
+                    margin-bottom:4px;
+                    text-align:center;
+                }
+                .pp-progress-track {
+                    height:6px;
+                    background:#d6b47a;
+                    border-radius:3px;
+                    overflow:hidden;
+                }
+                .pp-progress-fill {
+                    height:100%;
+                    width:0%;
+                    background:#8B4513;
+                    border-radius:3px;
+                    transition:width .3s;
+                }
                 .pp-scan-done {
-                    display:none; margin-top:5px; padding:5px 10px; border-radius:4px;
-                    background:#d4edda; border:1px solid #4a7c59; color:#1b3a27;
-                    font-size:11px; font-weight:bold; text-align:center;
+                    display:none;
+                    margin-top:5px;
+                    padding:5px 10px;
+                    border-radius:4px;
+                    background:#d4edda;
+                    border:1px solid #4a7c59;
+                    color:#1b3a27;
+                    font-size:11px;
+                    font-weight:bold;
+                    text-align:center;
                 }
                 .pp-scan-done.visible { display:block; }
 
-                /* ── colunas muralha/torre na tabela ─────────── */
                 .pp-building-cell {
-                    text-align:center; font-size:11px; font-weight:bold;
-                    padding:2px 6px; border-radius:3px; cursor:pointer;
-                    min-width:28px; display:inline-block;
-                    user-select:none; transition: filter .15s;
+                    text-align:center;
+                    font-size:11px;
+                    font-weight:bold;
+                    padding:2px 6px;
+                    border-radius:3px;
+                    cursor:pointer;
+                    min-width:28px;
+                    display:inline-block;
+                    user-select:none;
+                    transition:filter .15s;
                 }
-                .pp-building-cell:hover { filter: brightness(1.15); }
+                .pp-building-cell:hover { filter:brightness(1.15); }
                 .pp-building-cell.wall-high  { background:#4e2a04; color:#f5e6c8; }
                 .pp-building-cell.wall-mid   { background:#8B4513; color:#f5e6c8; }
                 .pp-building-cell.wall-low   { background:#c8935a; color:#fff; }
@@ -365,55 +525,118 @@
                 .pp-building-cell.tower-yes  { background:#33691e; color:#f1f8e9; }
                 .pp-building-cell.tower-zero { background:#e8ead8; color:#7a8060; }
                 .pp-building-cell.tower-none { background:transparent; color:#bbb; font-weight:normal; }
-                /* popup de nível clicável */
+
                 .pp-level-picker {
-                    position:fixed; z-index:10002; background:#fff; border:2px solid #6b4c24;
-                    border-radius:6px; padding:10px; box-shadow:0 4px 16px rgba(0,0,0,.35);
-                    display:flex; flex-direction:column; gap:0; min-width:230px;
+                    position:fixed;
+                    z-index:10002;
+                    background:#fff;
+                    border:2px solid #6b4c24;
+                    border-radius:6px;
+                    padding:10px;
+                    box-shadow:0 4px 16px rgba(0,0,0,.35);
+                    display:flex;
+                    flex-direction:column;
+                    gap:0;
+                    min-width:230px;
                 }
                 .pp-op-wrap { display:flex; flex-direction:column; gap:3px; margin-bottom:2px; }
                 .pp-op-btn {
-                    font-size:11px; padding:4px 8px; border-radius:4px; cursor:pointer; font-weight:bold; text-align:left;
-                    background:#f5f5f5; border:1px solid #ccc; color:#444;
-                    transition: background .1s;
+                    font-size:11px;
+                    padding:4px 8px;
+                    border-radius:4px;
+                    cursor:pointer;
+                    font-weight:bold;
+                    text-align:left;
+                    background:#f5f5f5;
+                    border:1px solid #ccc;
+                    color:#444;
+                    transition:background .1s;
                 }
                 .pp-op-btn:hover { background:#e8eaf6; border-color:#9fa8da; color:#1a237e; }
                 .pp-op-btn.active { background:#3949ab; color:#fff; border-color:#1a237e; }
+
                 .pp-lvl-grid { display:flex; flex-wrap:wrap; gap:3px; }
                 .pp-level-picker .pp-lvl-btn {
-                    font-size:11px; padding:3px 7px; border-radius:3px; cursor:pointer; font-weight:bold;
-                    background:#e8eaf6; border:1px solid #9fa8da; color:#1a237e;
-                    transition: background .1s;
+                    font-size:11px;
+                    padding:3px 7px;
+                    border-radius:3px;
+                    cursor:pointer;
+                    font-weight:bold;
+                    background:#e8eaf6;
+                    border:1px solid #9fa8da;
+                    color:#1a237e;
+                    transition:background .1s;
                 }
                 .pp-level-picker .pp-lvl-btn:hover { background:#3949ab; color:#fff; }
                 .pp-level-picker .pp-lvl-btn.active { background:#3949ab; color:#fff; border-color:#1a237e; }
+
                 .pp-level-picker .pp-lvl-clear {
-                    width:100%; font-size:10px; padding:3px; border-radius:3px; cursor:pointer;
-                    background:#fff; border:1px solid #c0392b; color:#c0392b; font-weight:bold;
-                    text-align:center; margin-top:6px;
+                    width:100%;
+                    font-size:10px;
+                    padding:3px;
+                    border-radius:3px;
+                    cursor:pointer;
+                    background:#fff;
+                    border:1px solid #c0392b;
+                    color:#c0392b;
+                    font-weight:bold;
+                    text-align:center;
+                    margin-top:6px;
                 }
                 .pp-level-picker .pp-lvl-clear:hover { background:#c0392b; color:#fff; }
 
-                /* ── aviso de carregamento parcial ───────────── */
                 .pp-load-warning {
-                    background:#f1aeb5; border:1px solid #f5c2c7; border-radius:5px;
-                    padding:8px 12px; margin-bottom:6px; color:#842029;
-                    font-size:12px; cursor:pointer; display:flex; align-items:center; gap:8px;
+                    background:#f1aeb5;
+                    border:1px solid #f5c2c7;
+                    border-radius:5px;
+                    padding:8px 12px;
+                    margin-bottom:6px;
+                    color:#842029;
+                    font-size:12px;
+                    cursor:pointer;
+                    display:flex;
+                    align-items:center;
+                    gap:8px;
                 }
                 .pp-load-warning:hover { background:#ea868f; }
                 .pp-load-warning-icon { font-size:16px; }
                 .pp-load-warning-text { flex:1; }
-                .pp-load-warning-button { padding:3px 8px; background:#dc3545; border:1px solid #b02a37; border-radius:3px; color:#fff; font-weight:bold; font-size:11px; }
+                .pp-load-warning-button {
+                    padding:3px 8px;
+                    background:#dc3545;
+                    border:1px solid #b02a37;
+                    border-radius:3px;
+                    color:#fff;
+                    font-weight:bold;
+                    font-size:11px;
+                    white-space:nowrap;
+                }
 
-                /* ── popup de notas ──────────────────────────── */
                 .note-popup {
-                    position:fixed; background:#fff; border:2px solid #8B4513; border-radius:8px;
-                    padding:0; width:450px; max-height:70vh; overflow:hidden;
-                    z-index:10000; box-shadow:0 4px 20px rgba(0,0,0,.5); display:flex; flex-direction:column;
+                    position:fixed;
+                    background:#fff;
+                    border:2px solid #8B4513;
+                    border-radius:8px;
+                    padding:0;
+                    width:450px;
+                    max-height:70vh;
+                    overflow:hidden;
+                    z-index:10000;
+                    box-shadow:0 4px 20px rgba(0,0,0,.5);
+                    display:flex;
+                    flex-direction:column;
                 }
                 .note-popup-header {
-                    font-size:15px; font-weight:bold; padding:10px 14px; background:#8B4513; color:#fff;
-                    cursor:move; user-select:none; display:flex; justify-content:space-between; align-items:center;
+                    font-size:15px;
+                    font-weight:bold;
+                    padding:10px 14px;
+                    background:#8B4513;
+                    color:#fff;
+                    cursor:move;
+                    user-select:none;
+                    display:flex;
+                    justify-content:space-between;
+                    align-items:center;
                 }
                 .note-popup-close { cursor:pointer; font-size:20px; line-height:1; padding:0 4px; }
                 .note-popup-close:hover { color:#ff6b6b; }
@@ -436,7 +659,25 @@
             return coords;
         }
 
-        // K = first digit of Y + first digit of X
+        // Find points by locating the coordinates TD (e.g. "518|585") and reading the next TD
+        // This is robust against colspan and injected columns shifting indices
+        function extractPointsFromRow($row) {
+            let points = null;
+            $row.find('td').each(function () {
+                const txt = $(this).text().trim();
+                if (/^\d+\|\d+$/.test(txt)) {
+                    const $next = $(this).next('td');
+                    if ($next.length) {
+                        const raw = $next.text().trim().replace(/\./g, '').replace(/\s/g, '').replace(/[^\d]/g, '');
+                        const val = parseInt(raw, 10);
+                        if (!isNaN(val)) points = val;
+                    }
+                    return false;
+                }
+            });
+            return points;
+        }
+
         function getContinentFromCoords(coords) {
             const m = coords && coords.match(/^(\d+)\|(\d+)$/);
             if (!m) return null;
@@ -452,8 +693,8 @@
         function updateStats() {
             const offCount = $('#villages_list .pp-note-icon.off').length;
             const defCount = $('#villages_list .pp-note-icon.def').length;
-            const ndCount  = $('#villages_list .pp-note-icon.no-data').length;
-            const totalCount   = getTotalVillagesCount();
+            const ndCount = $('#villages_list .pp-note-icon.no-data').length;
+            const totalCount = getTotalVillagesCount();
             const analyzedCount = offCount + defCount + ndCount;
             const pendingCount = Math.max(0, totalCount - analyzedCount);
 
@@ -465,14 +706,15 @@
 
         function getBuildingCellHtml(villageId, type) {
             const levels = type === 'wall'
-                ? (window.pp_settings.wallLevels  || {})
+                ? (window.pp_settings.wallLevels || {})
                 : (window.pp_settings.towerLevels || {});
             const lvl = levels[villageId];
             const base = ' data-vid="' + villageId + '" data-type="' + type + '"';
-            // Aldeia ainda não escaneada → hífen cinzento
+
             if (lvl === undefined) {
                 return '<span class="pp-building-cell ' + type + '-none" title="Sem informação — faça scan"' + base + '>–</span>';
             }
+
             let cls = '';
             if (type === 'wall') {
                 if (lvl >= 15) cls = 'wall-high';
@@ -482,6 +724,7 @@
             } else {
                 cls = lvl > 0 ? 'tower-yes' : 'tower-zero';
             }
+
             const icon = type === 'wall' ? '🏰' : '🗼';
             return '<span class="pp-building-cell ' + cls + '" title="Clique para filtrar"' + base + '>' + icon + lvl + '</span>';
         }
@@ -490,7 +733,7 @@
             const $thead = $('#villages_list > thead > tr');
             if ($thead.find('th.pp-th-notes').length === 0) {
                 $thead.each(function () {
-                    $(this).append('<th class="pp-th-wall"  style="text-align:center;font-size:11px;">🏰 Muralha</th>');
+                    $(this).append('<th class="pp-th-wall" style="text-align:center;font-size:11px;">🏰 Muralha</th>');
                     $(this).append('<th class="pp-th-tower" style="text-align:center;font-size:11px;">🗼 Torre</th>');
                     $(this).append('<th class="pp-th-notes" style="text-align:center;">' + getTranslation('notes') + '</th>');
                 });
@@ -498,8 +741,8 @@
 
             $('#villages_list > tbody > tr').each(function () {
                 const $row = $(this);
+
                 if ($row.find('.pp-note-icon').length > 0) {
-                    // já inicializado — só actualiza células de edifícios
                     const vid = $row.find('.pp-note-icon').data('village-id') + '';
                     $row.find('.pp-building-cell[data-type="wall"]').replaceWith(getBuildingCellHtml(vid, 'wall'));
                     $row.find('.pp-building-cell[data-type="tower"]').replaceWith(getBuildingCellHtml(vid, 'tower'));
@@ -517,10 +760,10 @@
                 const savedState = window.pp_settings.noteStates[villageId] || 'not-loaded';
                 const iconLabel = getLabel(savedState);
 
-                const $wallTd  = $('<td style="text-align:center;"></td>').html(getBuildingCellHtml(villageId, 'wall'));
+                const $wallTd = $('<td style="text-align:center;"></td>').html(getBuildingCellHtml(villageId, 'wall'));
                 const $towerTd = $('<td style="text-align:center;"></td>').html(getBuildingCellHtml(villageId, 'tower'));
-                const $icon    = $('<span class="pp-note-icon ' + savedState + '" data-village-id="' + villageId + '">' + iconLabel + '</span>');
-                const $newTd   = $('<td style="text-align:center;cursor:pointer;"></td>').append($icon);
+                const $icon = $('<span class="pp-note-icon ' + savedState + '" data-village-id="' + villageId + '">' + iconLabel + '</span>');
+                const $newTd = $('<td style="text-align:center;cursor:pointer;"></td>').append($icon);
 
                 $row.append($wallTd).append($towerTd).append($newTd);
 
@@ -531,130 +774,112 @@
             updateStats();
         }
 
-        function populateContinentChecklist() {
-            const $list = $('#k-filter-list');
-            if (!$list.length) return;
+        window.pp_activeFilter = window.pp_activeFilter || {
+            types: new Set(),
+            kList: [],
+            wallFilter: null,
+            towerFilter: null,
+            pointsFilter: null,
+            attackFilter: null  // null=all, 'mine'=attacked by me, 'ally'=attacked by ally, 'none'=not attacked
+        };
 
-            const selected = new Set(
-                $('#k-filter-list input[type="checkbox"]:checked')
-                    .map(function () { return this.value; })
-                    .get()
-            );
-
-            const set = new Set();
-            window.pp_rows.forEach(r => {
-                const coords = extractCoordsFromRow(r.row);
-                const k = coords ? getContinentFromCoords(coords) : null;
-                if (k) set.add(k);
-            });
-
-            const continents = Array.from(set).sort((a, b) => parseInt(a.slice(1), 10) - parseInt(b.slice(1), 10));
-
-            $list.empty();
-            continents.forEach(k => {
-                const checked = selected.has(k) ? 'checked' : '';
-                $list.append(`<label class="k-filter-item"><input type="checkbox" value="${k}" ${checked}> ${k}</label>`);
-            });
+        function getAttackState($row) {
+            // Classes definidas pelo jogo TW:
+            // .command-attack      = machado cinzento = meu ataque
+            // .command-attack-ally = machado azul     = ataque de aliado
+            const mine = $row.find('span.command-attack').not('.command-attack-ally').length > 0;
+            const ally = $row.find('span.command-attack-ally').length > 0;
+            return { mine, ally };
         }
 
-        function getSelectedContinents() {
-            return $('#k-filter-list input[type="checkbox"]:checked')
-                .map(function () { return this.value; })
-                .get();
-        }
-
-        // Estado activo dos filtros combinados
-        window.pp_activeFilter = window.pp_activeFilter || { types: new Set(), kList: [], wallFilter: null, towerFilter: null };
-
-        function applyFilters(types, kList, wallFilter, towerFilter) {
-            // types pode ser um Set, ou undefined (não mudar), ou 'reset' (limpar tudo)
-            // wallFilter/towerFilter: {op: '>='|'<='|'=', val: N} ou null
+        function applyFilters(types, kList, wallFilter, towerFilter, pointsFilter, attackFilter) {
             if (types === 'reset') {
-                window.pp_activeFilter.types       = new Set();
-                window.pp_activeFilter.kList       = [];
-                window.pp_activeFilter.wallFilter  = null;
+                window.pp_activeFilter.types = new Set();
+                window.pp_activeFilter.kList = [];
+                window.pp_activeFilter.wallFilter = null;
                 window.pp_activeFilter.towerFilter = null;
+                window.pp_activeFilter.pointsFilter = null;
+                window.pp_activeFilter.attackFilter = null;
             } else {
-                if (types        !== undefined) window.pp_activeFilter.types        = types;
-                if (kList        !== undefined) window.pp_activeFilter.kList        = kList;
-                if (wallFilter   !== undefined) window.pp_activeFilter.wallFilter   = wallFilter;
-                if (towerFilter  !== undefined) window.pp_activeFilter.towerFilter  = towerFilter;
+                if (types !== undefined) window.pp_activeFilter.types = types;
+                if (kList !== undefined) window.pp_activeFilter.kList = kList;
+                if (wallFilter !== undefined) window.pp_activeFilter.wallFilter = wallFilter;
+                if (towerFilter !== undefined) window.pp_activeFilter.towerFilter = towerFilter;
+                if (pointsFilter !== undefined) window.pp_activeFilter.pointsFilter = pointsFilter;
+                if (attackFilter !== undefined) window.pp_activeFilter.attackFilter = attackFilter;
             }
 
-            const activeTypes  = window.pp_activeFilter.types;
-            const activeK      = window.pp_activeFilter.kList;
-            const activeWall   = window.pp_activeFilter.wallFilter;
-            const activeTower  = window.pp_activeFilter.towerFilter;
+            const activeTypes = window.pp_activeFilter.types;
+            const activeK = window.pp_activeFilter.kList;
+            const activeWall = window.pp_activeFilter.wallFilter;
+            const activeTower = window.pp_activeFilter.towerFilter;
+            const activePoints = window.pp_activeFilter.pointsFilter;
+            const activeAttack = window.pp_activeFilter.attackFilter;
+
             const kSet = activeK.length > 0 ? new Set(activeK) : null;
             const noTypeFilter = activeTypes.size === 0;
-
-            const coords = [];
 
             window.pp_rows.forEach(r => {
                 const state = window.pp_settings.noteStates[r.id];
 
-                // Filtro por tipo: sem filtro = mostra tudo; com filtro = tem que bater em algum
                 const typeMatch = noTypeFilter ||
                     (activeTypes.has('no-data') && state !== 'off' && state !== 'def') ||
                     activeTypes.has(state);
 
-                // Filtro por continente
                 const rowCoords = extractCoordsFromRow(r.row);
                 const rowK = rowCoords ? getContinentFromCoords(rowCoords) : null;
                 const kMatch = !kSet || (rowK && kSet.has(rowK));
 
-                // Filtro por nível de muralha
-                const wallLvl  = (window.pp_settings.wallLevels  || {})[r.id];
+                const wallLvl = (window.pp_settings.wallLevels || {})[r.id];
                 const towerLvl = (window.pp_settings.towerLevels || {})[r.id];
+                const rowPoints = extractPointsFromRow(r.row);
+
                 function buildingMatch(lvl, filter) {
                     if (!filter) return true;
                     if (lvl === undefined) return false;
                     if (filter.op === '>=') return lvl >= filter.val;
                     if (filter.op === '<=') return lvl <= filter.val;
-                    if (filter.op === '=')  return lvl === filter.val;
+                    if (filter.op === '=') return lvl === filter.val;
                     return true;
                 }
-                const wallMatch  = buildingMatch(wallLvl,  activeWall);
+
+                // FIX: pointsMatch now correctly handles null/undefined points
+                function pointsMatch(points, filter) {
+                    if (!filter) return true;
+                    if (points === null || points === undefined || isNaN(points)) return false;
+
+                    if (filter.mode === 'max') return points <= filter.value;
+                    if (filter.mode === 'min') return points >= filter.value;
+                    if (filter.mode === 'between') return points >= filter.min && points <= filter.max;
+
+                    return true;
+                }
+
+                const wallMatch = buildingMatch(wallLvl, activeWall);
                 const towerMatch = buildingMatch(towerLvl, activeTower);
+                const pointsOk = pointsMatch(rowPoints, activePoints);
 
-                const show = typeMatch && kMatch && wallMatch && towerMatch;
-
-                if (show) {
-                    r.row.show();
-                    if (rowCoords) coords.push(rowCoords);
-                } else {
-                    r.row.hide();
+                let attackOk = true;
+                if (activeAttack) {
+                    const atk = getAttackState(r.row);
+                    if (activeAttack === 'mine') attackOk = atk.mine;
+                    else if (activeAttack === 'ally') attackOk = atk.ally;
+                    else if (activeAttack === 'none') attackOk = !atk.mine && !atk.ally;
                 }
+
+                const show = typeMatch && kMatch && wallMatch && towerMatch && pointsOk && attackOk;
+
+                if (show) r.row.show();
+                else r.row.hide();
             });
-
-            // Feedback
-            const hasTypeFilter = activeTypes.size > 0;
-            const hasKFilter = activeK.length > 0;
-
-            if ((hasTypeFilter || hasKFilter) && coords.length) {
-                navigator.clipboard.writeText(coords.join(' '));
-                const typeLabel = Array.from(activeTypes).map(t => t.toUpperCase()).join('+');
-                let msg = '';
-                if (hasTypeFilter && hasKFilter) {
-                    msg = `Filtradas ${coords.length} aldeias [${typeLabel}] em [${activeK.join(', ')}] (coords copiadas)`;
-                } else if (hasTypeFilter) {
-                    msg = `Filtradas ${coords.length} aldeias [${typeLabel}] (coords copiadas)`;
-                } else {
-                    msg = getTranslation('filteredKMulti', coords.length, activeK.join(', '));
-                }
-                if (typeof UI !== 'undefined' && UI.SuccessMessage) UI.SuccessMessage(msg);
-            }
         }
 
-        // Toggle de um tipo: se já está activo remove, se não está adiciona
         function toggleType(type) {
             const types = new Set(window.pp_activeFilter.types);
             if (types.has(type)) types.delete(type);
             else types.add(type);
-            applyFilters(types, undefined);
+            applyFilters(types, undefined, undefined, undefined, undefined);
         }
-
-        function filterByContinents(kList) { applyFilters(undefined, kList); }
 
         function checkAllVillagesLoaded() {
             const totalCount = getTotalVillagesCount();
@@ -668,6 +893,25 @@
             }).length > 0;
 
             return !hasLoadAllLink && displayedCount >= totalCount;
+        }
+
+        function clickLoadAllVillages() {
+            const lastRow = $('#villages_list > tbody > tr:last');
+            const loadAllLink = lastRow.find('a').filter(function () {
+                const txt = ($(this).text() || '').toLowerCase();
+                const oc = $(this).attr('onclick') || '';
+                return txt.includes('todas') || txt.includes('all') || oc.includes('getAllVillages');
+            });
+
+            if (loadAllLink.length > 0) {
+                loadAllLink[0].click();
+                return true;
+            }
+
+            if (typeof UI !== 'undefined' && UI.ErrorMessage) {
+                UI.ErrorMessage('Não encontrei o botão para carregar todas as aldeias.');
+            }
+            return false;
         }
 
         function updateLoadWarning() {
@@ -691,16 +935,10 @@
                 `);
 
                 warning.on('click', function () {
-                    const lastRow = $('#villages_list > tbody > tr:last');
-                    const loadAllLink = lastRow.find('a').filter(function () {
-                        const txt = ($(this).text() || '').toLowerCase();
-                        const oc = $(this).attr('onclick') || '';
-                        return txt.includes('todas') || txt.includes('all') || oc.includes('getAllVillages');
-                    });
-                    if (loadAllLink.length > 0) loadAllLink[0].click();
+                    clickLoadAllVillages();
                 });
 
-                $('.notes-toolbar').before(warning);
+                $('#villages_list').before(warning);
             } else {
                 $('#pp-load-warning').show();
                 $('#pp-load-warning .pp-load-warning-text').html(
@@ -713,31 +951,55 @@
             <div class="pp-panel">
                 <div class="pp-row-header">
                     <span class="pp-label">Contadores</span>
-                    <span class="pp-stat off"   title="${getTranslation('offensiveCount')}">⚔️ <b id="stat-off">0</b></span>
-                    <span class="pp-stat def"   title="${getTranslation('defensiveCount')}">🛡️ <b id="stat-def">0</b></span>
-                    <span class="pp-stat nd"    title="${getTranslation('unknownCount')}">❓ <b id="stat-nd">0</b></span>
+                    <span class="pp-stat off" title="${getTranslation('offensiveCount')}">⚔️ <b id="stat-off">0</b></span>
+                    <span class="pp-stat def" title="${getTranslation('defensiveCount')}">🛡️ <b id="stat-def">0</b></span>
+                    <span class="pp-stat nd" title="${getTranslation('unknownCount')}">❓ <b id="stat-nd">0</b></span>
                     <span class="pp-stat pending" title="${getTranslation('pendingCount')}">⏳ <b id="stat-pending">0</b></span>
-                    <button id="copy-visible" class="pp-btn-copy" style="margin-left:auto;white-space:nowrap;">${getTranslation('copyCoords')}</button>
+                    <button id="copy-visible" class="pp-btn-copy">${getTranslation('copyCoords')}</button>
                     <button id="scan-all" class="pp-btn-scan" title="${getTranslation('scanAllTooltip')}">${getTranslation('scanAll')}</button>
                 </div>
+
                 <div class="pp-row-filters">
                     <span class="pp-filter-label">Filtros:</span>
                     <button id="filter-off" class="pp-btn" title="${getTranslation('filterOffTooltip')}">⚔️ OFF</button>
                     <button id="filter-def" class="pp-btn" title="${getTranslation('filterDefTooltip')}">🛡️ DEF</button>
-                    <button id="filter-nd"  class="pp-btn" title="${getTranslation('filterUnknownTooltip')}">❓ Sem info</button>
+                    <button id="filter-nd" class="pp-btn" title="${getTranslation('filterUnknownTooltip')}">❓ Sem info</button>
                     <button id="filter-has-tower" class="pp-btn" title="Mostrar só aldeias com Torre">🗼 Torre</button>
                     <button id="reset-all-filters" class="pp-btn-reset" title="${getTranslation('showAllTooltip')}">✕ Limpar filtros</button>
                 </div>
+
+                <div class="pp-row-filters" style="background:#f3e5f5;">
+                    <span class="pp-filter-label">Ataques:</span>
+                    <button id="filter-attack-mine" class="pp-btn" title="Mostrar só aldeias que estou a atacar">⚔️ Atacado por mim</button>
+                    <button id="filter-attack-ally" class="pp-btn" title="Mostrar só aldeias que o aliado está a atacar">🗡️ Atacado por aliado</button>
+                    <button id="filter-attack-none" class="pp-btn" title="Mostrar só aldeias sem ataque">✅ Sem ataque</button>
+                </div>
+
                 <div class="pp-row-k">
                     <span class="pp-filter-label">K:</span>
                     <span class="k-tags-wrap" id="k-tags-wrap"></span>
                 </div>
+
                 <div class="pp-row-buildings">
                     <span class="pp-filter-label">Filtrar por nível:</span>
                     <button id="filter-wall-btn" class="pp-btn pp-building-toolbar-btn" title="Escolher nível de muralha">🏰 Muralha <span id="filter-wall-label" class="pp-building-lvl-label"></span></button>
                     <button id="filter-tower-btn" class="pp-btn pp-building-toolbar-btn" title="Escolher nível de torre">🗼 Torre <span id="filter-tower-label" class="pp-building-lvl-label"></span></button>
-                    <span id="building-filter-status" class="pp-building-status" style="font-size:10px;font-style:italic;color:#888;margin-left:6px;"></span>
+                    <span id="building-filter-status" class="pp-building-status"></span>
                 </div>
+
+                <div class="pp-row-buildings">
+                    <span class="pp-filter-label">Pontos da aldeia:</span>
+                    <select id="points-mode" class="pp-building-input" style="width:82px;">
+                        <option value="max">Até</option>
+                        <option value="between">Entre</option>
+                        <option value="min">Mais de</option>
+                    </select>
+                    <input type="number" id="points-value-1" class="pp-building-input" placeholder="Valor">
+                    <input type="number" id="points-value-2" class="pp-building-input" placeholder="Máx" style="display:none;">
+                    <button id="clear-points-filter" class="pp-btn-clear-buildings">Limpar</button>
+                    <span id="points-filter-status" class="pp-building-status"></span>
+                </div>
+
                 <div class="pp-progress-wrap" id="pp-progress-wrap">
                     <div class="pp-progress-bar-text" id="pp-progress-text">A analisar...</div>
                     <div class="pp-progress-track"><div class="pp-progress-fill" id="pp-progress-fill"></div></div>
@@ -745,17 +1007,15 @@
                 </div>
             </div>
         `);
+
         $('#villages_list').before(toolbar);
 
-        // Botão copiar coords no fundo da tabela
-        const copyBtnBottom = $('<div style="text-align:right;margin-top:6px;"><button id="copy-visible-bottom" class="pp-btn-copy" style="font-size:11px;padding:4px 12px;">' + getTranslation('copyCoords') + '</button></div>');
+        const copyBtnBottom = $('<div style="text-align:right;margin-top:6px;"><button id="copy-visible-bottom" class="pp-btn-copy" style="font-size:11px;padding:4px 12px;margin-left:0;">' + getTranslation('copyCoords') + '</button></div>');
         $('#villages_list').after(copyBtnBottom);
 
         initializeNoteIcons();
         updateStats();
-        populateContinentChecklist();
         updateLoadWarning();
-        updateActiveFilterUI();
 
         let debounceTimer;
         const observer = new MutationObserver(function (mutations) {
@@ -777,8 +1037,9 @@
                 debounceTimer = setTimeout(() => {
                     window.pp_rows = window.pp_rows.filter(r => r.row.closest('body').length > 0);
                     initializeNoteIcons();
-                    populateContinentChecklist();
                     updateLoadWarning();
+                    updateActiveFilterUI();
+                    applyFilters(undefined, undefined, undefined, undefined, undefined);
                 }, 150);
             }
         });
@@ -786,25 +1047,96 @@
         const villagesList = document.getElementById('villages_list');
         if (villagesList) observer.observe(villagesList, { childList: true, subtree: true });
 
-        // Actualiza estado visual de todos os botões e tags K
+        function filterLabel(f) {
+            if (!f) return '';
+            const opSym = f.op === '>=' ? '≥' : f.op === '<=' ? '≤' : '=';
+            return '<i style="font-style:italic;font-weight:normal;">' + opSym + f.val + '</i>';
+        }
+
+        function updatePointsModeUI() {
+            const mode = $('#points-mode').val();
+            if (mode === 'between') {
+                $('#points-value-1').attr('placeholder', 'Min');
+                $('#points-value-2').show().attr('placeholder', 'Max');
+            } else {
+                $('#points-value-1').attr('placeholder', 'Valor');
+                $('#points-value-2').hide().val('');
+            }
+        }
+
+        function updatePointsFilterStatus() {
+            const pf = window.pp_activeFilter.pointsFilter;
+
+            if (!pf) {
+                $('#points-filter-status').text('');
+                $('#points-value-1').val('');
+                $('#points-value-2').val('');
+                return;
+            }
+
+            if (pf.mode === 'max') {
+                $('#points-mode').val('max');
+                $('#points-value-1').val(pf.value);
+                $('#points-value-2').val('');
+                $('#points-filter-status').text('Pontos da aldeia até ' + pf.value);
+            } else if (pf.mode === 'min') {
+                $('#points-mode').val('min');
+                $('#points-value-1').val(pf.value);
+                $('#points-value-2').val('');
+                $('#points-filter-status').text('Pontos da aldeia acima de ' + pf.value);
+            } else if (pf.mode === 'between') {
+                $('#points-mode').val('between');
+                $('#points-value-1').val(pf.min);
+                $('#points-value-2').val(pf.max);
+                $('#points-filter-status').text('Pontos da aldeia entre ' + pf.min + ' e ' + pf.max);
+            }
+
+            updatePointsModeUI();
+        }
+
+        function updateBuildingStatus() {
+            const w = window.pp_activeFilter.wallFilter;
+            const t = window.pp_activeFilter.towerFilter;
+            const wActive = !!w;
+            const tActive = !!t;
+
+            $('#filter-wall-label').html(wActive ? filterLabel(w) : '');
+            $('#filter-tower-label').html(tActive ? filterLabel(t) : '');
+            $('#filter-wall-btn').toggleClass('active-filter', wActive);
+            $('#filter-tower-btn').toggleClass('active-filter', tActive);
+
+            const towerToggleActive = tActive && t.op === '>=' && t.val === 1;
+            $('#filter-has-tower').toggleClass('active-filter', towerToggleActive);
+
+            const parts = [];
+            if (wActive) parts.push('🏰' + filterLabel(w));
+            if (tActive) parts.push('🗼' + filterLabel(t));
+            $('#building-filter-status').html(parts.length ? parts.join(' | ') : '');
+        }
+
         function updateActiveFilterUI() {
             const activeTypes = window.pp_activeFilter.types;
-            const activeK     = window.pp_activeFilter.kList;
+            const activeK = window.pp_activeFilter.kList;
 
-            // Botões de tipo (toggle visual)
             $('#filter-off').toggleClass('active-filter', activeTypes.has('off'));
             $('#filter-def').toggleClass('active-filter', activeTypes.has('def'));
             $('#filter-nd').toggleClass('active-filter', activeTypes.has('no-data'));
 
-            // Tags K: mostra todas as disponíveis, activas ou não
+            const af = window.pp_activeFilter.attackFilter;
+            $('#filter-attack-mine').toggleClass('active-filter', af === 'mine');
+            $('#filter-attack-ally').toggleClass('active-filter', af === 'ally');
+            $('#filter-attack-none').toggleClass('active-filter', af === 'none');
+
             const $wrap = $('#k-tags-wrap');
             const activeKSet = new Set(activeK);
             const allK = [];
+
             window.pp_rows.forEach(r => {
                 const coords = extractCoordsFromRow(r.row);
                 const k = coords ? getContinentFromCoords(coords) : null;
                 if (k && !allK.includes(k)) allK.push(k);
             });
+
             allK.sort((a, b) => parseInt(a.slice(1), 10) - parseInt(b.slice(1), 10));
 
             $wrap.empty();
@@ -813,52 +1145,45 @@
                 const $tag = $('<span class="k-tag"></span>')
                     .text(k)
                     .toggleClass('active-filter', isActive);
+
                 $tag.on('click', function () {
                     const newKSet = new Set(window.pp_activeFilter.kList);
                     if (newKSet.has(k)) newKSet.delete(k);
                     else newKSet.add(k);
-                    applyFilters(undefined, Array.from(newKSet));
+
+                    applyFilters(undefined, Array.from(newKSet), undefined, undefined, undefined);
                     updateActiveFilterUI();
                 });
+
                 $wrap.append($tag);
             });
 
-            // Highlight botões de edifício
             updateBuildingStatus();
+            updatePointsFilterStatus();
         }
 
-        $('#filter-off').click(() => { toggleType('off'); updateActiveFilterUI(); });
-        $('#filter-def').click(() => { toggleType('def'); updateActiveFilterUI(); });
-        $('#filter-nd').click(() => { toggleType('no-data'); updateActiveFilterUI(); });
-
-        $('#reset-all-filters').click(() => {
-            applyFilters('reset');
-            updateActiveFilterUI();
-            updateBuildingStatus();
-        });
-
-        // Botões de filtro por nível na toolbar — abrem o picker
         function openToolbarPicker(type, $anchor) {
             $('.pp-level-picker').remove();
             const maxLvl = 20;
             const activeFilter = type === 'wall' ? window.pp_activeFilter.wallFilter : window.pp_activeFilter.towerFilter;
-            const activeOp  = (activeFilter && activeFilter.op)  || '>=';
+            const activeOp = (activeFilter && activeFilter.op) || '>=';
             const activeVal = (activeFilter && activeFilter.val != null) ? activeFilter.val : null;
-
             let selectedOp = activeOp;
 
             const $picker = $('<div class="pp-level-picker" style="min-width:230px;"></div>');
-
-            // Título
             const title = type === 'wall' ? '🏰 Muralha' : '🗼 Torre';
             $picker.append('<div style="width:100%;font-size:11px;font-weight:bold;color:#3949ab;margin-bottom:6px;">' + title + '</div>');
 
-            // Selector de operador
             const $opWrap = $('<div class="pp-op-wrap"></div>');
-            const ops = [{ val: '>=', label: '≥ maior ou igual' }, { val: '<=', label: '≤ menor ou igual' }, { val: '=', label: '= igual a' }];
-            ops.forEach(function(o) {
+            const ops = [
+                { val: '>=', label: '≥ maior ou igual' },
+                { val: '<=', label: '≤ menor ou igual' },
+                { val: '=', label: '= igual a' }
+            ];
+
+            ops.forEach(function (o) {
                 const $ob = $('<button class="pp-op-btn' + (selectedOp === o.val ? ' active' : '') + '">' + o.label + '</button>');
-                $ob.on('click', function(ev) {
+                $ob.on('click', function (ev) {
                     ev.stopPropagation();
                     selectedOp = o.val;
                     $picker.find('.pp-op-btn').removeClass('active');
@@ -866,99 +1191,48 @@
                 });
                 $opWrap.append($ob);
             });
-            $picker.append($opWrap);
 
-            // Separador
+            $picker.append($opWrap);
             $picker.append('<div style="width:100%;font-size:10px;color:#888;margin:6px 0 4px;">Nível:</div>');
 
-            // Grid de níveis
             const $grid = $('<div class="pp-lvl-grid"></div>');
             for (let i = 0; i <= maxLvl; i++) {
                 const $btn = $('<button class="pp-lvl-btn">' + i + '</button>');
                 if (activeVal == i) $btn.addClass('active');
-                $btn.on('click', function(ev) {
+
+                $btn.on('click', function (ev) {
                     ev.stopPropagation();
                     $('.pp-level-picker').remove();
                     const f = { op: selectedOp, val: i };
-                    if (type === 'wall') applyFilters(undefined, undefined, f, undefined);
-                    else                 applyFilters(undefined, undefined, undefined, f);
+                    if (type === 'wall') applyFilters(undefined, undefined, f, undefined, undefined);
+                    else applyFilters(undefined, undefined, undefined, f, undefined);
                     updateActiveFilterUI();
                     updateBuildingStatus();
                 });
+
                 $grid.append($btn);
             }
+
             $picker.append($grid);
 
-            // Limpar
             const $clear = $('<button class="pp-lvl-clear">✕ Sem filtro</button>');
-            $clear.on('click', function(ev) {
+            $clear.on('click', function (ev) {
                 ev.stopPropagation();
                 $('.pp-level-picker').remove();
-                if (type === 'wall') applyFilters(undefined, undefined, null, undefined);
-                else                 applyFilters(undefined, undefined, undefined, null);
+                if (type === 'wall') applyFilters(undefined, undefined, null, undefined, undefined);
+                else applyFilters(undefined, undefined, undefined, null, undefined);
                 updateActiveFilterUI();
                 updateBuildingStatus();
             });
+
             $picker.append($clear);
 
             $('body').append($picker);
             const rect = $anchor[0].getBoundingClientRect();
-            $picker.css({ top: rect.bottom + 4 + 'px', left: Math.min(rect.left, window.innerWidth - 240) + 'px' });
-        }
-
-        $('#filter-wall-btn').click(function(e) {
-            e.stopPropagation();
-            openToolbarPicker('wall', $(this));
-        });
-        $('#filter-tower-btn').click(function(e) {
-            e.stopPropagation();
-            openToolbarPicker('tower', $(this));
-        });
-
-        // Toggle "tem torre"
-        $('#filter-has-tower').click(() => {
-            const current = window.pp_activeFilter.towerFilter;
-            const isActive = current && current.op === '>=' && current.val === 1;
-            const next = isActive ? null : { op: '>=', val: 1 };
-            applyFilters(undefined, undefined, undefined, next);
-            updateActiveFilterUI();
-            updateBuildingStatus();
-        });
-
-        // Clique nas células de edifício abre picker de nível mínimo
-        $(document).on('click', '.pp-building-cell', function(e) {
-            e.stopPropagation();
-            openToolbarPicker($(this).data('type'), $(this));
-        });
-
-        // Fechar picker ao clicar fora
-        $(document).on('click', function(e) {
-            if (!$(e.target).closest('.pp-level-picker').length) {
-                $('.pp-level-picker').remove();
-            }
-        });
-
-        function filterLabel(f) {
-            if (!f) return '';
-            const opSym = f.op === '>=' ? '≥' : f.op === '<=' ? '≤' : '=';
-            return '<i style="font-style:italic;font-weight:normal;">' + opSym + f.val + '</i>';
-        }
-
-        function updateBuildingStatus() {
-            const w = window.pp_activeFilter.wallFilter;
-            const t = window.pp_activeFilter.towerFilter;
-            const wActive = !!w;
-            const tActive = !!t;
-            $('#filter-wall-label').html(wActive ? filterLabel(w) : '');
-            $('#filter-tower-label').html(tActive ? filterLabel(t) : '');
-            $('#filter-wall-btn').toggleClass('active-filter', wActive);
-            $('#filter-tower-btn').toggleClass('active-filter', tActive);
-            const towerToggleActive = tActive && t.op === '>=' && t.val === 1;
-            $('#filter-has-tower').toggleClass('active-filter', towerToggleActive);
-            const parts = [];
-            if (wActive) parts.push('🏰' + filterLabel(w));
-            if (tActive) parts.push('🗼' + filterLabel(t));
-            $('#building-filter-status').html(parts.length ? parts.join(' | ') : '');
+            $picker.css({
+                top: rect.bottom + 4 + 'px',
+                left: Math.min(rect.left, window.innerWidth - 240) + 'px'
+            });
         }
 
         function doCopyVisible() {
@@ -969,6 +1243,7 @@
                     if (c) coords.push(c);
                 }
             });
+
             if (coords.length) {
                 navigator.clipboard.writeText(coords.join(' '));
                 if (typeof UI !== 'undefined' && UI.SuccessMessage) {
@@ -976,19 +1251,149 @@
                 }
             }
         }
+
+        // FIX: applyPointsFilterLive now triggers even with value=0, and properly reads the input
+        function applyPointsFilterLive() {
+            const mode = $('#points-mode').val();
+            const raw1 = $('#points-value-1').val().trim();
+            const raw2 = $('#points-value-2').val().trim();
+
+            if (raw1 === '' && raw2 === '') {
+                applyFilters(undefined, undefined, undefined, undefined, null);
+                updatePointsFilterStatus();
+                return;
+            }
+
+            const v1 = raw1 === '' ? NaN : parseInt(raw1, 10);
+            const v2 = raw2 === '' ? NaN : parseInt(raw2, 10);
+
+            if (mode === 'max') {
+                if (isNaN(v1)) return;
+                applyFilters(undefined, undefined, undefined, undefined, {
+                    mode: 'max',
+                    value: v1
+                });
+            } else if (mode === 'min') {
+                if (isNaN(v1)) return;
+                applyFilters(undefined, undefined, undefined, undefined, {
+                    mode: 'min',
+                    value: v1
+                });
+            } else if (mode === 'between') {
+                if (isNaN(v1) || isNaN(v2)) return;
+                applyFilters(undefined, undefined, undefined, undefined, {
+                    mode: 'between',
+                    min: Math.min(v1, v2),
+                    max: Math.max(v1, v2)
+                });
+            }
+
+            updatePointsFilterStatus();
+        }
+
         $('#copy-visible').click(doCopyVisible);
         $(document).on('click', '#copy-visible-bottom', doCopyVisible);
+
+        $('#filter-off').click(() => {
+            toggleType('off');
+            updateActiveFilterUI();
+        });
+
+        $('#filter-def').click(() => {
+            toggleType('def');
+            updateActiveFilterUI();
+        });
+
+        $('#filter-nd').click(() => {
+            toggleType('no-data');
+            updateActiveFilterUI();
+        });
+
+        $('#reset-all-filters').click(() => {
+            applyFilters('reset');
+            updateActiveFilterUI();
+            updateBuildingStatus();
+            updatePointsFilterStatus();
+        });
+
+        $('#filter-wall-btn').click(function (e) {
+            e.stopPropagation();
+            openToolbarPicker('wall', $(this));
+        });
+
+        $('#filter-tower-btn').click(function (e) {
+            e.stopPropagation();
+            openToolbarPicker('tower', $(this));
+        });
+
+        $('#filter-has-tower').click(() => {
+            const current = window.pp_activeFilter.towerFilter;
+            const isActive = current && current.op === '>=' && current.val === 1;
+            const next = isActive ? null : { op: '>=', val: 1 };
+            applyFilters(undefined, undefined, undefined, next, undefined);
+            updateActiveFilterUI();
+            updateBuildingStatus();
+        });
+
+        $('#filter-attack-mine').click(() => {
+            const cur = window.pp_activeFilter.attackFilter;
+            applyFilters(undefined, undefined, undefined, undefined, undefined, cur === 'mine' ? null : 'mine');
+            updateActiveFilterUI();
+        });
+
+        $('#filter-attack-ally').click(() => {
+            const cur = window.pp_activeFilter.attackFilter;
+            applyFilters(undefined, undefined, undefined, undefined, undefined, cur === 'ally' ? null : 'ally');
+            updateActiveFilterUI();
+        });
+
+        $('#filter-attack-none').click(() => {
+            const cur = window.pp_activeFilter.attackFilter;
+            applyFilters(undefined, undefined, undefined, undefined, undefined, cur === 'none' ? null : 'none');
+            updateActiveFilterUI();
+        });
+
+        $('#points-mode').on('change', function () {
+            updatePointsModeUI();
+            applyPointsFilterLive();
+        });
+
+        // FIX: use 'input' event so filter triggers on every keystroke
+        $('#points-value-1').on('input', function () {
+            applyPointsFilterLive();
+        });
+
+        $('#points-value-2').on('input', function () {
+            applyPointsFilterLive();
+        });
+
+        $('#clear-points-filter').click(() => {
+            $('#points-value-1').val('');
+            $('#points-value-2').val('');
+            applyFilters(undefined, undefined, undefined, undefined, null);
+            updatePointsFilterStatus();
+        });
+
+        $(document).on('click', '.pp-building-cell', function (e) {
+            e.stopPropagation();
+            openToolbarPicker($(this).data('type'), $(this));
+        });
+
+        $(document).on('click', function (e) {
+            if (!$(e.target).closest('.pp-level-picker').length) {
+                $('.pp-level-picker').remove();
+            }
+        });
 
         $('#scan-all').click(async () => {
             const performScan = async () => {
                 const $progressWrapEarly = $('#pp-progress-wrap');
                 $progressWrapEarly.addClass('active');
                 $('#pp-scan-done').removeClass('visible');
-                $('#pp-progress-fill').css('width','0%');
+                $('#pp-progress-fill').css('width', '0%');
                 $('#pp-progress-text').text(getTranslation('loadingAllVillages'));
 
                 if (!checkAllVillagesLoaded()) {
-
                     const lastRow = $('#villages_list > tbody > tr:last');
                     const loadAllLink = lastRow.find('a').filter(function () {
                         const txt = ($(this).text() || '').toLowerCase();
@@ -997,7 +1402,7 @@
                     });
 
                     if (loadAllLink.length > 0) {
-                        loadAllLink[0].click();
+                        clickLoadAllVillages();
 
                         await new Promise(resolve => {
                             const checkInterval = setInterval(() => {
@@ -1018,7 +1423,7 @@
                 const $progressWrap = $('#pp-progress-wrap');
                 const $progressText = $('#pp-progress-text');
                 const $progressFill = $('#pp-progress-fill');
-                const $scanDone     = $('#pp-scan-done');
+                const $scanDone = $('#pp-scan-done');
 
                 $scanDone.removeClass('visible');
                 $progressFill.css('width', '0%');
@@ -1044,7 +1449,6 @@
                 $progressText.text('✔ Concluído');
                 $scanDone.text('✅ Scan completo! Todas as aldeias foram analisadas.').addClass('visible');
                 updateActiveFilterUI();
-                populateContinentChecklist();
 
                 setTimeout(() => {
                     $progressWrap.removeClass('active');
@@ -1108,45 +1512,48 @@
 
                     const villageType = hasData ? classifyVillage(noteContent) : 'no-data';
 
-                    // Extrair nivel de muralha e torre da tabela de edificios
-                    // O HTML PT tem: <td>Muralha</td><td>20</td> e <td>Torre de vigia</td><td>1</td>
-                    // Se o edificio nao aparece na tabela, o nivel e 0.
                     function extractBuildingFromTable($doc, namePatterns) {
-                        var found = null;
-                        $doc.find('td').each(function() {
-                            var cellText = $(this).text().trim().toLowerCase();
-                            if (namePatterns.some(function(p) { return cellText === p; })) {
-                                var $next = $(this).next('td');
+                        let found = null;
+                        $doc.find('td').each(function () {
+                            const cellText = $(this).text().trim().toLowerCase();
+                            if (namePatterns.some(function (p) { return cellText === p; })) {
+                                const $next = $(this).next('td');
                                 if ($next.length) {
-                                    var lvl = parseInt($next.text().trim(), 10);
-                                    if (!isNaN(lvl)) { found = lvl; return false; }
+                                    const lvl = parseInt($next.text().trim(), 10);
+                                    if (!isNaN(lvl)) {
+                                        found = lvl;
+                                        return false;
+                                    }
                                 }
                             }
                         });
-                        return found; // null = não aparece na tabela = edifício não existe ou não escaneado
+                        return found;
                     }
 
-                    var wallLevel  = extractBuildingFromTable($loadedContent, ['muralha', 'wall']);
-                    var towerLevel = extractBuildingFromTable($loadedContent, ['torre de vigia', 'watchtower']);
+                    const wallLevel = extractBuildingFromTable($loadedContent, ['muralha', 'wall']);
+                    const towerLevel = extractBuildingFromTable($loadedContent, ['torre de vigia', 'watchtower']);
 
                     window.pp_settings.noteStates[villageId] = villageType;
-                    window.pp_settings.wallLevels  = window.pp_settings.wallLevels  || {};
+                    window.pp_settings.wallLevels = window.pp_settings.wallLevels || {};
                     window.pp_settings.towerLevels = window.pp_settings.towerLevels || {};
-                    if (wallLevel  !== null) window.pp_settings.wallLevels[villageId]  = wallLevel;
+
+                    if (wallLevel !== null) window.pp_settings.wallLevels[villageId] = wallLevel;
                     else delete window.pp_settings.wallLevels[villageId];
+
                     if (towerLevel !== null) window.pp_settings.towerLevels[villageId] = towerLevel;
                     else delete window.pp_settings.towerLevels[villageId];
+
                     saveSettings();
 
                     $icon.removeClass('loading not-loaded off def no-data').addClass(villageType).text(getLabel(villageType));
 
-                    // Actualizar células de muralha e torre nesta linha
-                    const $row = $icon.closest('tr');
-                    $row.find('.pp-building-cell[data-type="wall"]').replaceWith(getBuildingCellHtml(villageId, 'wall'));
-                    $row.find('.pp-building-cell[data-type="tower"]').replaceWith(getBuildingCellHtml(villageId, 'tower'));
+                    const $currentRow = $icon.closest('tr');
+                    $currentRow.find('.pp-building-cell[data-type="wall"]').replaceWith(getBuildingCellHtml(villageId, 'wall'));
+                    $currentRow.find('.pp-building-cell[data-type="tower"]').replaceWith(getBuildingCellHtml(villageId, 'tower'));
 
                     updateStats();
-                    populateContinentChecklist();
+                    updateActiveFilterUI();
+                    applyFilters(undefined, undefined, undefined, undefined, undefined);
 
                     if (hasData) {
                         showNotePopup(villageId, noteContent, coords);
@@ -1239,5 +1646,9 @@
                 saveSettings();
             });
         }
+
+        updatePointsModeUI();
+        updateActiveFilterUI();
+        applyFilters(undefined, undefined, undefined, undefined, undefined);
     }
 })();
