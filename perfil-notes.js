@@ -1658,4 +1658,6 @@
         updateActiveFilterUI();
         applyFilters(undefined, undefined, undefined, undefined, undefined);
     }
+        console.log("MDS Scripts © 2026 - TW Perfil Notes");
+    
 })();
