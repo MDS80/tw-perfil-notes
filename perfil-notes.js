@@ -1,3 +1,10 @@
+/*
+ * Script desenvolvido por David Mendes da Silva (MDS)
+ * GitHub: https://github.com/MDS80
+ * Projeto: TW Perfil Notes
+ * Ano: 2026
+ */
+
 // ==UserScript==
 // @name         TW Notes Scanner + Filtros de perfil
 // @namespace    http://tampermonkey.net/
